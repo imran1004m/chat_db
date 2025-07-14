@@ -31,6 +31,35 @@ dotenv	Secure config via .env
 LangChain	RAG orchestration with FAISS
 
 
+🗂️ Load Data into MySQL Workbench
+To run this app, you’ll need some sample data in your MySQL database. Here's how to do that:
+
+1. Open MySQL Workbench and connect to your local server.
+
+
+2. Create a database, for example:
+    CREATE DATABASE employee_db;
+    USE employee_db;
+
+
+3. Create tables (e.g., employee, manager, department):
+    CREATE TABLE employee (
+    EmployeeID INT PRIMARY KEY,
+    FirstName VARCHAR(50),
+    LastName VARCHAR(50),
+    Department VARCHAR(50),
+    JobTitle VARCHAR(50),
+    Salary DECIMAL(10,2),
+    HireDate DATE,
+    IsActive BOOLEAN
+);
+
+
+4. Insert data manually or using .sql or .csv:
+    --> From Workbench → Right-click the table → "Table Data Import Wizard"
+
+    
+
 📁 Folder Structure:
 chat_mysql/
 │
