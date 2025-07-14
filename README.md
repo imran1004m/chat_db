@@ -1,11 +1,11 @@
 # chat_db
 
-💬 Natural Language Chat App for MySQL Database (with RAG)
+**💬 Natural Language Chat App for MySQL Database (with RAG)**
 This project enables anyone — technical or non-technical — to query a live MySQL database using plain English, thanks to OpenAI's GPT model and FAISS-based Retrieval-Augmented Generation (RAG).
 
 It translates natural language questions into SQL, executes them, and returns results both as a table and a human-readable explanation.
 
-🚀 Features
+**🚀 Features**
 🔍 Natural Language to SQL with GPT-3.5
 
 ✅ SQL Execution on live MySQL databases
@@ -19,7 +19,7 @@ It translates natural language questions into SQL, executes them, and returns re
 💻 Streamlit UI — clean, accessible, and fast
 
 
-🛠️ Tech Stack:
+**🛠️ Tech Stack:**
 Tool	Purpose
 Python	Core backend and logic
 Streamlit	UI for interaction
@@ -31,7 +31,7 @@ dotenv	Secure config via .env
 LangChain	RAG orchestration with FAISS
 
 
-📁 Folder Structure:
+**📁 Folder Structure:**
 chat_mysql/
 │
 ├── main.py               # Streamlit App (RAG + SQL logic)
@@ -42,7 +42,8 @@ chat_mysql/
 └── README.md             # Project overview
 
 
-🔐 .env Configuration:
+**🔐 .env Configuration:**
+
 Create a .env file with the following:
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
@@ -52,21 +53,21 @@ DB_NAME=your_database_name
 OPENAI_API_KEY=your_openai_api_key
 
 
-⚙️ Setup Instructions:
-1. Clone the repo
+**⚙️ Setup Instructions:**
+**1. Clone the repo**
 
 git clone https://github.com/yourusername/chat_mysql.git
 cd chat_mysql
 
-2. Install dependencies
+**2. Install dependencies**
 pip install -r requirements.txt
 
-3. Run the app
+**3. Run the app**
 streamlit run main.py
 
 ############################
 
-💡 Why RAG?
+**💡 Why RAG?**
 Using Retrieval-Augmented Generation with FAISS:
 
 Caches previous query/response pairs
@@ -76,7 +77,7 @@ Reduces OpenAI API costs
 Improves response speed for repeated questions
 
 
-📌 To-Do / Improvements:
+**📌 To-Do / Improvements:**
 Add authentication
 
 Enable multilingual queries
