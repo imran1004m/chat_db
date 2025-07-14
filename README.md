@@ -56,7 +56,7 @@ To run this app, you’ll need some sample data in your MySQL database. Here's h
 
 
 4. Insert data manually or using .sql or .csv:
-    --> From Workbench → Right-click the table → "Table Data Import Wizard"
+    --> From Workbench → Right-click the table → "Table Data Import Wizard".
 
     
 
