@@ -1,3 +1,158 @@
 list top 5 employee getting highest salary in each department
 what is total count of employee
 list top 5 employee getting highest salary
+
+
+in how many film Amitabh Bachchan has acted
+list actors whose name starts with a
+what is the budget of movie_id 102 with currency and movie name
+what is the budget of movie_id 102 with currency
+fetch table financials
+what is the budget of movie_id 102
+what is the budget of movie_id 101
+fetch table financials
+what is the revenue of sholay film
+
+
+##################################################################################
+
+import os
+import re
+import streamlit as st
+import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from openai import OpenAI
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+
+load_dotenv()
+
+# Load environment variables
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+DB_PORT = int(DB_PORT) if DB_PORT else 3306
+DB_URI = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DB_URI)
+
+embedding_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+INDEX_PATH = "vector_index"
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+def get_schema():
+    query = """
+    SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = :db_name;
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(query), {"db_name": DB_NAME})
+        rows = result.fetchall()
+    schema_desc = {}
+    for table, col, dtype in rows:
+        schema_desc.setdefault(table, []).append(f"{col} ({dtype})")
+    schema_str = ""
+    for table, cols in schema_desc.items():
+        schema_str += f"Table `{table}` with columns: {', '.join(cols)}.\n"
+    return schema_str
+
+def get_or_create_vectorstore(schema_text):
+    if os.path.exists(INDEX_PATH):
+        return FAISS.load_local(INDEX_PATH, embedding_model, allow_dangerous_deserialization=True)
+    docs = [Document(page_content=schema_text)]
+    vectorstore = FAISS.from_documents(docs, embedding_model)
+    vectorstore.save_local(INDEX_PATH)
+    return vectorstore
+
+def retrieve_from_vectorstore(vectorstore, question):
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 1})
+    retrieved_docs = retriever.invoke(question)
+    return retrieved_docs[0].page_content if retrieved_docs else ""
+
+def generate_sql_and_response(question, schema_text):
+    messages = [
+        {"role": "system", "content": f"You are an assistant that generates syntactically correct MySQL queries. Use this schema:\n{schema_text}"},
+        {"role": "user", "content": question}
+    ]
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages,
+        temperature=0
+    )
+    content = response.choices[0].message.content
+    sql_match = re.search(r"```sql\n(.*?)```", content, re.DOTALL)
+    return sql_match.group(1).strip() if sql_match else content.strip()
+
+def run_sql_query(sql):
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(sql))
+            rows = result.fetchall()
+            columns = result.keys()
+            data = [dict(zip(columns, row)) for row in rows]
+        return data, None
+    except Exception as e:
+        return None, str(e)
+
+def explain_results(sql, results):
+    messages = [
+        {"role": "system", "content": "Explain the SQL result in clear, simple language."},
+        {"role": "user", "content": f"Query: {sql}\nResult: {results}"}
+    ]
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages,
+        temperature=0
+    )
+    return response.choices[0].message.content
+
+def init_chat_history():
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+def render_chat_history():
+    st.markdown("### 🕓 Chat History")
+    for chat in reversed(st.session_state.chat_history):
+        with st.chat_message("user"):
+            st.markdown(chat["question"])
+        with st.chat_message("assistant"):
+            st.markdown(f"**🧠 Question:** {chat['question']}\n\n**📝 SQL:**\n```sql\n{chat['sql']}\n```")
+            if chat.get("error"):
+                st.error(f"❌ Error: {chat['error']}")
+            elif chat.get("results"):
+                df = pd.DataFrame(chat["results"])
+                st.dataframe(df, use_container_width=True)
+                st.markdown(f"**💬 Explanation:**\n{chat['explanation']}")
+
+def main():
+    st.set_page_config(page_title="Chat with DB", layout="wide")
+    st.title("💬 Chat with Your MySQL Database")
+    st.markdown("---")
+    init_chat_history()
+    schema = get_schema()
+    vectorstore = get_or_create_vectorstore(schema)
+    question = st.chat_input("Ask a question about your database:")
+    if question:
+        schema_context = retrieve_from_vectorstore(vectorstore, question)
+        generated_sql = generate_sql_and_response(question, schema_context)
+        results, error = run_sql_query(generated_sql)
+        explanation = None
+        if not error and results:
+            explanation = explain_results(generated_sql, results)
+        st.session_state.chat_history.append({
+            "question": question,
+            "sql": generated_sql,
+            "results": results,
+            "explanation": explanation,
+            "error": error
+        })
+    render_chat_history()
+
+if __name__ == "__main__":
+    main()
