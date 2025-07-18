@@ -210,4 +210,4 @@ __marimo__/
 # FAISS index or vectorstore
 faiss_index/
 *.pkl
-schema.json/
+schem_cache.json
