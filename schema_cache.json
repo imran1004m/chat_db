@@ -1,1 +1,0 @@
-{"department": ["DepartmentID", "DepartmentName", "ManagerID"], "employee": ["EmployeeID", "FirstName", "LastName", "Department", "JobTitle", "Salary", "HireDate", "IsActive"], "manager": ["ManagerID", "FirstName", "LastName", "Email"]}
