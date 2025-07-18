@@ -1,181 +1,174 @@
-import os
-import re
+# main.py
 import streamlit as st
 import pandas as pd
-from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from openai import OpenAI
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+import openai
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.express as px
+import os
+import urllib.parse
+from dotenv import load_dotenv
+from schema_utils import get_schema_info
+from rag_utils import get_rag_sql_answer
 
-# Load environment variables
+# ------------------ Load Environment Variables ------------------ #
 load_dotenv()
 
-# Initialize OpenAI client
-client = OpenAI()
-
-# Database credentials
 DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_PASSWORD = urllib.parse.quote_plus(os.getenv("DB_PASSWORD"))
 DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", 3306))
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DB_PORT = os.getenv("DB_PORT")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Embedding model
-embedding_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+# ------------------ Session State Initialization ------------------ #
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = {}
+if "selected_db" not in st.session_state:
+    st.session_state.selected_db = None
+if "last_df" not in st.session_state:
+    st.session_state.last_df = None
+if "visual_config" not in st.session_state:
+    st.session_state.visual_config = {}
 
-# Create SQLAlchemy engine
-def create_engine_with_db(db_name):
-    return create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{db_name}")
-
+# ------------------ Helper Functions ------------------ #
 def list_databases():
-    engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/")
-    with engine.connect() as conn:
-        result = conn.execute(text("SHOW DATABASES;"))
-        return [row[0] for row in result]
-
-def get_schema(db_name):
-    engine = create_engine_with_db(db_name)
-    query = """
-    SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = :db_name;
-    """
-    with engine.connect() as conn:
-        result = conn.execute(text(query), {"db_name": db_name})
-        rows = result.fetchall()
-    schema_desc = {}
-    for table, col, dtype in rows:
-        schema_desc.setdefault(table, []).append(f"{col} ({dtype})")
-    schema_str = ""
-    for table, cols in schema_desc.items():
-        schema_str += f"Table `{table}` with columns: {', '.join(cols)}.\n"
-    return schema_str
-
-def get_or_create_vectorstore(schema, index_path):
-    if os.path.exists(index_path):
-        return FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
-    else:
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        docs = [Document(page_content=chunk) for chunk in text_splitter.split_text(schema)]
-        vectorstore = FAISS.from_documents(docs, embedding_model)
-        vectorstore.save_local(index_path)
-        return vectorstore
-
-def get_similar_context(question, vectorstore):
-    docs = vectorstore.similarity_search(question, k=3)
-    return "\n".join([doc.page_content for doc in docs])
-
-def generate_sql_and_response(prompt, context):
-    messages = [
-        {"role": "system", "content": f"You are an AI assistant that writes correct SQL queries for a MySQL database. Use the schema context:\n{context}"},
-        {"role": "user", "content": prompt}
-    ]
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        temperature=0,
-    )
-    content = response.choices[0].message.content
-    sql_match = re.search(r"```sql\n(.*?)```", content, re.DOTALL)
-    return sql_match.group(1).strip() if sql_match else content.strip()
-
-def run_sql_query(sql, db_name):
     try:
-        engine = create_engine_with_db(db_name)
+        engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/")
         with engine.connect() as conn:
-            result = conn.execute(text(sql))
-            rows = result.fetchall()
-            columns = result.keys()
-            data = [dict(zip(columns, row)) for row in rows]
-        return data, None
-    except Exception as e:
-        return None, str(e)
+            result = conn.execute(text("SHOW DATABASES;"))
+            return [row[0] for row in result]
+    except Exception as err:
+        st.error(f"[!] Failed to load databases: {err}")
+        return []
 
-def generate_natural_language_response(sql, query_result):
-    messages = [
-        {"role": "system", "content": "You are an assistant that explains SQL query results in simple natural language."},
-        {"role": "user", "content": f"SQL query: {sql}\nResult: {query_result}\nExplain the result."}
-    ]
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        temperature=0,
-    )
-    return response.choices[0].message.content
+def execute_sql(database, query):
+    engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{database}")
+    with engine.connect() as conn:
+        result = conn.execute(text(query))
+        columns = result.keys()
+        rows = result.fetchall()
+        return [dict(zip(columns, row)) for row in rows]
 
+# ------------------ Main App ------------------ #
 def main():
-    st.set_page_config(page_title="Chat with MySQL", page_icon="💬")
-    st.title("💬 Chat with Your MySQL Database")
+    st.title("Chat with Your MySQL Database + RAG")
 
-    # Session states
-    if "connected" not in st.session_state:
-        st.session_state.connected = False
-    if "selected_db" not in st.session_state:
-        st.session_state.selected_db = ""
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    # Sidebar
-    st.sidebar.header("Database Connection")
     dbs = list_databases()
     selected_db = st.sidebar.selectbox("Select Database:", dbs)
 
-    if st.sidebar.button("🔌 Connect"):
-        try:
-            schema = get_schema(selected_db)
-            st.session_state.selected_db = selected_db
-            st.session_state.connected = True
-            index_path = f"faiss_index_{selected_db}"
-            st.session_state.vectorstore = get_or_create_vectorstore(schema, index_path)
-            st.success(f"✅ Connected to `{selected_db}`")
-        except Exception as e:
-            st.session_state.connected = False
-            st.error(f"❌ Failed to connect: {e}")
+    if selected_db != st.session_state.selected_db:
+        st.session_state.selected_db = selected_db
+        st.session_state.last_df = None
 
-    if not st.session_state.connected:
-        st.warning("⚠️ Please connect to a database first.")
-        return
+    if selected_db not in st.session_state.chat_history:
+        st.session_state.chat_history[selected_db] = []
 
-    user_question = st.text_input("Ask a question about your database:")
-    if user_question:
-        st.session_state.chat_history.append(user_question)
+    # Load schema freshly each time to avoid mismatches
+    try:
+        engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{selected_db}")
+        schema = get_schema_info(engine, force_refresh=True)
+    except Exception as e:
+        st.error(f"[!] Failed to load schema: {e}")
+        schema = {}
 
-        with st.spinner("Generating SQL..."):
-            context = get_similar_context(user_question, st.session_state.vectorstore)
-            generated_sql = generate_sql_and_response(user_question, context)
+    # Debug view (dev only)
+    with st.expander("Show Schema (Debug View)"):
+        st.json(schema)
 
-        st.markdown(f"🧠 **Question:** {user_question}")
-        st.code(generated_sql, language="sql")  # ✅ Show the generated SQL query
+    user_input = st.text_input("Ask a question about your database:", key="user_input")
 
-        if generated_sql.lower().strip().startswith(("select", "show", "with", "insert", "update", "delete")):
-            with st.spinner("Executing SQL query..."):
-                results, error = run_sql_query(generated_sql, st.session_state.selected_db)
+    if st.button("Ask") and user_input:
+        with st.spinner("Generating SQL and fetching data using RAG..."):
+            rag_result = get_rag_sql_answer(engine, selected_db, user_input, schema)
 
-            if error:
-                st.error(f"❌ SQL Error: {error}")
-            else:
-                if results:
-                    df = pd.DataFrame(results)
-                    st.success("✅ Query executed successfully! Results:")
-                    st.dataframe(df)
+            if not rag_result or not rag_result["sql"].lower().startswith("select"):
+                st.error("[!] Only SELECT queries are allowed or valid SQL could not be generated.")
+                return
+
+            try:
+                results = execute_sql(selected_db, rag_result["sql"])
+                df = pd.DataFrame(results)
+                st.session_state.last_df = df
+                st.session_state.visual_config[selected_db] = {}
+
+                st.success("Query executed successfully! Results:")
+                st.write("Generated SQL Query:")
+                st.code(rag_result["sql"], language="sql")
+                st.dataframe(df)
+                st.caption(f"Returned {len(df)} rows")
+
+                st.write("Explanation:")
+                st.info(rag_result["explanation"])
+
+                st.session_state.chat_history[selected_db].append({
+                    "question": user_input,
+                    "sql": rag_result["sql"],
+                    "explanation": rag_result["explanation"]
+                })
+
+            except Exception as e:
+                st.error(f"Error executing query:\n\n```sql\n{rag_result['sql']}\n```\n\nError: {e}")
+
+    # Visualization
+    if st.session_state.last_df is not None:
+        df = st.session_state.last_df
+        with st.expander("Visualize the result"):
+            config = st.session_state.visual_config[selected_db]
+
+            chart_type = st.selectbox("Choose chart type", ["Bar", "Line", "Pie"], key="chart_type")
+            lib = st.radio("Library", ["Seaborn", "Plotly"], horizontal=True, key="lib")
+            x_axis = st.selectbox("X-axis", df.columns, key="x_axis")
+            y_axis = st.selectbox("Y-axis", df.select_dtypes(include='number').columns, key="y_axis")
+
+            if chart_type and x_axis and y_axis:
+                st.subheader(f"{chart_type} Chart ({lib})")
+                if lib == "Seaborn":
+                    fig, ax = plt.subplots()
+                    if chart_type == "Bar":
+                        sns.barplot(x=x_axis, y=y_axis, data=df, ax=ax)
+                    elif chart_type == "Line":
+                        sns.lineplot(x=x_axis, y=y_axis, data=df, ax=ax)
+                    elif chart_type == "Pie":
+                        df_pie = df.groupby(x_axis)[y_axis].sum().reset_index()
+                        ax.pie(df_pie[y_axis], labels=df_pie[x_axis], autopct="%1.1f%%")
+                        ax.axis("equal")
+                    st.pyplot(fig)
                 else:
-                    st.warning("⚠️ Query executed successfully but returned no results.")
-
-                with st.spinner("Generating explanation..."):
-                    explanation = generate_natural_language_response(generated_sql, results)
-                st.markdown(f"🗣️ **Explanation:**\n{explanation}")
-        else:
-            # Not a valid SQL query
-            st.markdown(f"📝 **Response:**\n{generated_sql}")
+                    if chart_type == "Bar":
+                        fig = px.bar(df, x=x_axis, y=y_axis)
+                    elif chart_type == "Line":
+                        fig = px.line(df, x=x_axis, y=y_axis)
+                    elif chart_type == "Pie":
+                        df_pie = df.groupby(x_axis)[y_axis].sum().reset_index()
+                        fig = px.pie(df_pie, values=y_axis, names=x_axis)
+                    st.plotly_chart(fig, use_container_width=True)
 
     # Chat history
-    if st.session_state.chat_history:
-        st.markdown("🕓 **Chat History**")
-        for q in reversed(st.session_state.chat_history):
-            st.markdown(f"- {q}")
+    with st.expander("Chat History"):
+        chat_items = st.session_state.chat_history[selected_db]
+        for item in chat_items:
+            st.markdown(f"**Q:** {item['question']}")
+            st.markdown(f"**SQL:**\n```sql\n{item['sql']}\n```")
+            st.markdown(f"**Explanation:** {item['explanation']}")
+            st.markdown("---")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Clear History"):
+                st.session_state.chat_history[selected_db] = []
+                st.experimental_rerun()
+        with col2:
+            st.download_button("Download History", 
+                               data=pd.DataFrame(chat_items).to_csv(index=False), 
+                               file_name=f"{selected_db}_chat_history.csv", 
+                               mime="text/csv")
+
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: grey;'>Powered by OpenAI + LangChain · Built with ❤️ using Streamlit</div>",
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
