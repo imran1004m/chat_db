@@ -1,64 +1,61 @@
-from openai import OpenAI
+# rag_utils.py
 import os
 from dotenv import load_dotenv
+from openai import OpenAI
+from schema_utils import get_schema_info
+from rag_vector_utils import get_or_create_vectorstore, retrieve_relevant_schema
 
+# ✅ Load environment variables from .env file
 load_dotenv()
+
+# ✅ Use API key from environment
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def get_rag_sql_answer(engine, database, question, schema):
-    context_lines = []
-    for table, columns in schema.items():
-        context_lines.append(f"Table `{table}`: columns = {', '.join(columns)}")
-    context = "\n".join(context_lines)
+def get_rag_sql_answer(engine, db_name, question):
+    schema = get_schema_info(engine, force_refresh=True)
+    schema_str = "\n".join([f"{table}: {', '.join(columns)}" for table, columns in schema.items()])
+
+    vectorstore = get_or_create_vectorstore(schema_str, db_name)
+    relevant_schema = retrieve_relevant_schema(vectorstore, question)
 
     prompt = f"""
-You are a MySQL expert assistant. Given the database schema and a natural language question, generate only a valid SELECT SQL query.
+You are a senior SQL data analyst.
 
-Instructions:
-- Do NOT use INSERT, UPDATE, DELETE, DROP, or any modifying queries.
-- Only generate a SELECT query using the correct table and column names from the schema.
-- Do NOT include any markdown, explanation, or comments in your answer.
-- You are querying the `{database}` MySQL database.
+Your job is to translate a user's natural language question into a **valid and safe MySQL query**, using only the schema provided.
 
-Schema:
-{context}
+Rules:
+- Use only SELECT queries.
+- If the user asks for "how many", assume aggregation like COUNT().
+- If the question mentions "each", "per", "group", "by department", or similar, use GROUP BY.
+- Use table/column names only from the schema — don’t guess.
+- If the question is ambiguous, assume the user wants the most relevant columns.
 
-Question:
+SCHEMA:
+{relevant_schema}
+
+QUESTION:
 {question}
 
-Only return the SQL query (nothing else):
+Write only the SQL query below:
 """.strip()
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                { "role": "system", "content": "You are a MySQL assistant that returns only valid SELECT queries." },
-                { "role": "user", "content": prompt }
-            ]
-        )
-        sql = response.choices[0].message.content.strip()
 
-        # ✅ Ensure it's a SELECT query
-        if not sql.lower().startswith("select"):
-            return None  # causes UI to trigger warning
+    sql_response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}]
+    ).choices[0].message.content.strip()
 
-        # ✅ Explanation
-        explanation_prompt = f"Explain the following SQL query in simple terms:\n\n{sql}"
-        explanation_response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                { "role": "system", "content": "You explain SQL queries clearly and simply." },
-                { "role": "user", "content": explanation_prompt }
-            ]
-        )
-        explanation = explanation_response.choices[0].message.content.strip()
-
-        return {
-            "sql": sql,
-            "explanation": explanation
-        }
-
-    except Exception as e:
-        print(f"[RAG ERROR] Failed to generate SQL: {e}")
+    if not sql_response.lower().startswith("select"):
         return None
+
+    # Add explanation
+    explain_prompt = f"Explain in simple terms what this SQL query does:\n\n{sql_response}"
+    explanation = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": explain_prompt}]
+    ).choices[0].message.content.strip()
+
+    return {
+        "sql": sql_response,
+        "explanation": explanation
+    }

@@ -1,1 +1,1 @@
-{"actors": ["actor_id", "name", "birth_year"], "financials": ["movie_id", "budget", "revenue", "unit", "currency"], "languages": ["language_id", "name"], "movie_actor": ["movie_id", "actor_id"], "movies": ["movie_id", "title", "industry", "release_year", "imdb_rating", "studio", "language_id"]}
+{"department": ["DepartmentID", "DepartmentName", "ManagerID"], "employee": ["EmployeeID", "FirstName", "LastName", "Department", "JobTitle", "Salary", "HireDate", "IsActive"], "manager": ["ManagerID", "FirstName", "LastName", "Email"]}

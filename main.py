@@ -80,7 +80,8 @@ def main():
 
     if st.button("Ask") and user_input:
         with st.spinner("Generating SQL and fetching data using RAG..."):
-            rag_result = get_rag_sql_answer(engine, selected_db, user_input, schema)
+            rag_result = get_rag_sql_answer(engine, selected_db, user_input)
+
 
             if not rag_result or not rag_result["sql"].lower().startswith("select"):
                 st.error("[!] Only SELECT queries are allowed or valid SQL could not be generated.")
